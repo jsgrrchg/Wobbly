@@ -81,7 +81,7 @@ enum WindowLocator {
         }.max() ?? 0
     }
 
-    private static let log = Logger(subsystem: "dev.jfg.Wobbly", category: "hit-test")
+    private static let log = Logger(subsystem: "io.github.jsgrrchg.Wobbly", category: "hit-test")
 
     /// Menus and the menu bar block on purpose and would show up on every click: only large layers and
     /// small windows from other apps (like the cursor WindowServer draws while recording) are logged.

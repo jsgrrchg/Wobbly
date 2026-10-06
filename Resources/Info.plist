@@ -11,7 +11,7 @@
 	<key>CFBundleIconName</key>
 	<string>Wobbly</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.jfg.Wobbly</string>
+	<string>io.github.jsgrrchg.Wobbly</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
