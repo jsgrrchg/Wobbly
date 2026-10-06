@@ -4,6 +4,8 @@ Compiz-style wobbly windows for macOS. Drag a window and it wobbles like jelly, 
 
 Wobbly is a menu bar app with no private APIs and no dependencies.
 
+https://github.com/user-attachments/assets/510ff9e4-de24-4584-a43f-265a82f9ff4b
+
 ## Installing
 
 Requires macOS 14 or later, on Apple Silicon or Intel.
