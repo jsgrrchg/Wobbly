@@ -1,0 +1,74 @@
+# Builds, signs and publishes Wobbly-<version>.dmg when a v* tag is pushed.
+#
+# Signing uses the Apple Development identity stored in the SIGNING_CERT_P12 (base64 .p12)
+# and SIGNING_CERT_PASSWORD secrets. Without them the app is signed ad-hoc.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    env:
+      SIGNING_CERT_P12: ${{ secrets.SIGNING_CERT_P12 }}
+      SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Test
+        run: swift test
+
+      - name: Import signing certificate
+        if: env.SIGNING_CERT_P12 != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$SIGNING_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$SIGNING_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" Resources/Info.plist
+
+      - name: Build app
+        run: |
+          scripts/build-app.sh
+          lipo -archs build/Wobbly.app/Contents/MacOS/Wobbly
+          if [ -n "$SIGNING_CERT_P12" ]; then
+            codesign -dvv build/Wobbly.app 2>&1 | grep -q "Authority=Apple Development" \
+              || { echo "::error::App was not signed with the Apple Development identity"; exit 1; }
+          fi
+
+      - name: Create DMG
+        run: |
+          STAGING="$RUNNER_TEMP/dmg"
+          mkdir -p "$STAGING"
+          cp -R build/Wobbly.app "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+          hdiutil create -volname Wobbly -srcfolder "$STAGING" -ov -format UDZO "build/Wobbly-$VERSION.dmg"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "build/Wobbly-$VERSION.dmg" \
+            --title "Wobbly $VERSION" --generate-notes
+
+      - name: Remove signing keychain
+        if: always() && env.SIGNING_CERT_P12 != ''
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

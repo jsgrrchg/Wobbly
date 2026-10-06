@@ -6,7 +6,9 @@ Wobbly is a menu bar app with no private APIs and no dependencies.
 
 ## Installing
 
-Download `Wobbly.app` from Releases and move it to `/Applications`. The app is not notarized, so the first time you open it macOS will block it: go to **System Settings → Privacy & Security** and click **Open Anyway**.
+Requires macOS 14 or later, on Apple Silicon or Intel.
+
+Download the DMG from Releases and drag Wobbly to `/Applications`. The app is not notarized, so the first time you open it macOS will block it: go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
 ## Usage
 

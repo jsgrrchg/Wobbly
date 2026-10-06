@@ -2,15 +2,16 @@
 # Copyright (C) 2026 José Gurruchaga
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Builds and packages build/Wobbly.app.
+# Builds and packages build/Wobbly.app as a universal binary (Apple Silicon and Intel).
 # Signs with the "Apple Development" identity if one exists (or SIGN_IDENTITY): with a stable signature
 # macOS keeps the Accessibility and Screen Recording permissions across builds.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${CONFIG:-release}"
-swift build -c "$CONFIG"
-BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
+ARCHS=(--arch arm64 --arch x86_64)
+swift build -c "$CONFIG" "${ARCHS[@]}"
+BIN_DIR="$(swift build -c "$CONFIG" "${ARCHS[@]}" --show-bin-path)"
 
 APP="build/Wobbly.app"
 rm -rf "$APP"
