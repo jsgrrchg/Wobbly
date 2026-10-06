@@ -1,0 +1,53 @@
+Wobbly
+Copyright (C) 2026 José Gurruchaga
+
+Wobbly is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See LICENSE for the full text.
+
+Wobbly includes code derived from the following third-party works.
+
+--------------------------------------------------------------------------------
+Compiz wobbly plugin (plugins/wobbly.c) and
+Compiz windows effect, src/effects/wobbly_model.js
+Used in: Sources/WobblyCore/WobblyModel.swift
+--------------------------------------------------------------------------------
+
+Copyright © 2005 Novell, Inc.
+Copyright © 2022 Mauro Pepe
+
+Permission to use, copy, modify, distribute, and sell this software
+and its documentation for any purpose is hereby granted without
+fee, provided that the above copyright notice appear in all copies
+and that both that copyright notice and this permission notice
+appear in supporting documentation, and that the name of
+Novell, Inc. not be used in advertising or publicity pertaining to
+distribution of the software without specific, written prior permission.
+Novell, Inc. makes no representations about the suitability of this
+software for any purpose. It is provided "as is" without express or
+implied warranty.
+
+NOVELL, INC. DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN
+NO EVENT SHALL NOVELL, INC. BE LIABLE FOR ANY SPECIAL, INDIRECT OR
+CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION
+WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+Author: David Reveman <davidr@novell.com>
+        Scott Moreau <oreaus@gmail.com>
+        Mauro Pepe <https://github.com/hermes83/compiz-windows-effect>
+
+Spring model implemented by Kristian Hogsberg.
+
+--------------------------------------------------------------------------------
+Compiz windows effect for GNOME Shell, src/effects/resize.js
+Used in: Sources/WobblyCore/ResizeBounce.swift
+--------------------------------------------------------------------------------
+
+Copyright (C) 2020 Mauro Pepe <https://github.com/hermes83/compiz-windows-effect>
+
+Licensed under the GNU General Public License, version 3 or (at your option)
+any later version. See LICENSE for the full text.
