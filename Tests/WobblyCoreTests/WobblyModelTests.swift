@@ -111,6 +111,25 @@ final class WobblyModelTests: XCTestCase {
         XCTAssertEqual(vertices.last!.y, 340, accuracy: 1e-3)
     }
 
+    func testShadowRingWrapsTheWindowGrid() {
+        let model = WobblyModel(size: SIMD2(400, 200), origin: SIMD2(100, 100))
+        var window: [SIMD4<Float>] = []
+        var ringed: [SIMD4<Float>] = []
+        model.fillVertices(tilesX: 16, tilesY: 14, into: &window)
+        model.fillVertices(tilesX: 16, tilesY: 14, outset: (20, 10, 30, 40), into: &ringed)
+        XCTAssertEqual(ringed.count, 19 * 17)
+        XCTAssertEqual(ringed.first!.x, 80, accuracy: 1e-3)
+        XCTAssertEqual(ringed.first!.y, 90, accuracy: 1e-3)
+        XCTAssertEqual(ringed.last!.x, 530, accuracy: 1e-3)
+        XCTAssertEqual(ringed.last!.y, 340, accuracy: 1e-3)
+        // Inside the ring, the same vertices as the plain window grid.
+        for j in 0...14 {
+            for i in 0...16 {
+                XCTAssertEqual(ringed[(j + 1) * 19 + i + 1], window[j * 17 + i])
+            }
+        }
+    }
+
     func testResizeBounceKeepsThePickupRowStillAndEnds() {
         let bounce = ResizeBounce(
             size: SIMD2(800, 600), origin: SIMD2(0, 0), edges: [.right],

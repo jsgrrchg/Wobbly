@@ -42,6 +42,8 @@ private final class DragSession {
     /// Mouse-less effects (maximize, resize): they create their deformer once the capture arrives.
     var makeEffect: ((CGSize) -> WindowDeformer)?
     var tiles: (x: Int, y: Int)?
+    /// Shadow of the capture on screen: the native one, which depends on whether the window was active.
+    var shadow: ShadowInsets?
 
     init(window: WindowInfo, cursor: CGPoint) {
         self.window = window
@@ -442,6 +444,32 @@ final class WobblyController: NSObject {
             mover.move(axWindow, to: session.origin)
             if !session.mouseDown { self.session = nil }
         }
+        if self.session === session { recaptureAfterRaise(session) }
+    }
+
+    /// The first capture is taken before raising the window: a background window has the inactive look there
+    /// (smaller shadow, grey title bar) but comes back active at the end, which shows as a jump. Capture again
+    /// once the activation has landed and swap it in if the shadow changed.
+    private func recaptureAfterRaise(_ session: DragSession) {
+        Task {
+            for delay in [0.15, 0.25] {
+                try? await Task.sleep(for: .seconds(delay))
+                guard self.session === session, !session.isAborted,
+                      let frame = try? await capture.capture(session.window), self.session === session else { return }
+                if session.deformer == nil {
+                    attach(frame, to: session)
+                    return
+                }
+                switch session.phase {
+                case .dragging, .settling: break
+                default: return
+                }
+                guard frame.pointSize == session.window.frame.size,
+                      session.shadow.map(frame.shadow.differs(from:)) ?? false else { continue }
+                if renderer.setFrame(frame) { session.shadow = frame.shadow }
+                return
+            }
+        }
     }
 
     private func startCapture(for session: DragSession) {
@@ -464,6 +492,7 @@ final class WobblyController: NSObject {
         }
         guard renderer.setFrame(frame) else { return }
         precapture = nil
+        session.shadow = frame.shadow
 
         let deformer: WindowDeformer
         if let make = session.makeEffect {
