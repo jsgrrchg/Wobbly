@@ -94,6 +94,8 @@ enum AXBridge {
     }
 
     static func raise(_ window: AXUIElement, pid: pid_t) {
+        // Make it the app's main window first, so activating the app doesn't jump to a Space with another of its windows.
+        AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
         AXUIElementPerformAction(window, kAXRaiseAction as CFString)
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
