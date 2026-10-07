@@ -13,9 +13,9 @@ private final class DragSession {
         case dragging
         /// Released (or effect in progress): the jelly settles at `origin`.
         case settling
-        /// Real window moved back into place; waiting for WindowServer to confirm it.
+        /// Real window being moved back into place; waiting for the app to apply it.
         case restoring(deadline: CFTimeInterval)
-        /// Removing the overlay a few frames after the real window is visible again.
+        /// The real window is visible again: fading out the overlay's shadow, then removing the overlay.
         case closing(ticksLeft: Int)
         /// Can't animate (full screen, no AX…): just swallow the rest of the gesture.
         case aborted
@@ -33,10 +33,8 @@ private final class DragSession {
     var deformer: WindowDeformer?
     var hideCountdown: Int?
     var hidden = false
-    /// Frame of the real window right before parking it, and when that was requested.
-    var parkRequest: (frame: CGRect, time: CFTimeInterval)?
-    /// WindowServer has moved the real window: from now on the overlay draws the shadow.
-    var parkConfirmed = false
+    /// The overlay draws the shadow: only while the real window, with its native one, is parked.
+    var overlayShadow = false
     /// Title bar height if the drag started on it (nil if it started with the shortcut).
     var titleBarHeight: CGFloat?
     /// Mouse-less effects (maximize, resize): they create their deformer once the capture arrives.
@@ -57,14 +55,6 @@ private final class DragSession {
     var isAborted: Bool {
         if case .aborted = phase { return true }
         return false
-    }
-
-    /// Until the real window is back in place (`restoring` phase) there is no native shadow on screen.
-    var realWindowIsAway: Bool {
-        switch phase {
-        case .dragging, .settling, .restoring: return true
-        case .closing, .aborted: return false
-        }
     }
 }
 
@@ -101,6 +91,8 @@ final class WobblyController: NSObject {
     private var pendingClick: PendingClick?
     private var resizeWatch: ResizeWatch?
     private var displayLink: CADisplayLink?
+    /// Polls the real window while it is being parked or put back (see `watchRealWindow`).
+    private var watcher: DispatchSourceTimer?
     private var lastTick: CFTimeInterval = 0
     private var precapture: (windowID: CGWindowID, startedAt: CFTimeInterval, task: Task<CapturedFrame?, Never>)?
     private var pendingZoom: (element: AXUIElement, pid: pid_t)?
@@ -509,7 +501,7 @@ final class WobblyController: NSObject {
         session.hideCountdown = 2
 
         // The real window stays underneath with its native shadow until it is parked.
-        renderer.shadowEnabled = false
+        renderer.shadowOpacity = 0
         updateScene(session, deformer)
         if overlays.isEmpty {
             overlays = NSScreen.screens.map { OverlayWindow(screen: $0, renderer: renderer) }
@@ -546,9 +538,8 @@ final class WobblyController: NSObject {
                 hideRealWindowIfDue(session)
             }
         case .restoring(let deadline):
-            let frame = WindowLocator.frame(of: session.window.id)
-            let arrived = frame.map { abs($0.minX - session.origin.x) < 1.5 && abs($0.minY - session.origin.y) < 1.5 } ?? false
-            if arrived || now > deadline { session.phase = .closing(ticksLeft: 2) }
+            // Normally the watcher started in `beginRestore` gets here first, as soon as the window is back.
+            if now > deadline { realWindowRestored(session) }
         case .closing(let ticksLeft):
             if ticksLeft == 1 {
                 renderer.clearScene()
@@ -561,20 +552,9 @@ final class WobblyController: NSObject {
             break
         }
 
-        confirmParkingIfNeeded(session, now: now)
-        renderer.shadowEnabled = settings.shadow && session.parkConfirmed && session.realWindowIsAway
+        renderer.shadowOpacity = session.overlayShadow && settings.shadow ? 1 : 0
         if renderer.hasScene { updateScene(session, deformer) }
         overlays.forEach { $0.render() }
-    }
-
-    /// Two overlapping shadows (the native one and the overlay's) show up as a dark flicker, so the
-    /// overlay's is only drawn once WindowServer confirms the real window is no longer underneath.
-    private func confirmParkingIfNeeded(_ session: DragSession, now: CFTimeInterval) {
-        guard !session.parkConfirmed, let request = session.parkRequest else { return }
-        let moved = WindowLocator.frame(of: session.window.id).map {
-            abs($0.minX - request.frame.minX) > 2 || abs($0.minY - request.frame.minY) > 2
-        } ?? false
-        if moved || now - request.time > 0.25 { session.parkConfirmed = true }
     }
 
     private func hideRealWindowIfDue(_ session: DragSession) {
@@ -586,20 +566,75 @@ final class WobblyController: NSObject {
         // The overlay has been on screen for a couple of frames: now it's safe to park the real window.
         session.hideCountdown = nil
         session.hidden = true
-        if let frame = WindowLocator.frame(of: session.window.id) {
-            session.parkRequest = (frame, CACurrentMediaTime())
-        }
         let parking = parkingPoint()
+        let before = WindowLocator.frame(of: session.window.id)
         AXBridge.queue(for: axWindow).async { AXBridge.setPosition(axWindow, parking) }
+        watchRealWindow(session, timeout: 0.25, until: { Self.offset($0, from: before) > 2 }) { [weak self] in
+            self?.setOverlayShadow(true, session)
+        }
     }
 
     private func beginRestore(_ session: DragSession) {
         session.hideCountdown = nil
+        session.phase = .restoring(deadline: CACurrentMediaTime() + 0.5)
         let target = session.origin
         if let axWindow = session.axWindow {
             AXBridge.queue(for: axWindow).async { AXBridge.setPosition(axWindow, target) }
         }
-        session.phase = .restoring(deadline: CACurrentMediaTime() + 0.3)
+        // Never parked: the native shadow never left, nothing to hand over.
+        guard session.hidden else {
+            realWindowRestored(session)
+            return
+        }
+        let rest = CGRect(origin: target, size: session.window.frame.size)
+        watchRealWindow(session, timeout: 0.5, until: { Self.offset($0, from: rest) <= 8 }) { [weak self] in
+            self?.realWindowRestored(session)
+        }
+    }
+
+    private func realWindowRestored(_ session: DragSession) {
+        guard self.session === session, case .restoring = session.phase else { return }
+        setOverlayShadow(false, session)
+        session.phase = .closing(ticksLeft: 2)
+    }
+
+    /// The real window moves 1-2 frames after the AX call returns (whenever its app commits), so neither waiting
+    /// for the call nor checking once per frame catches the frame WindowServer shows the move in: one shadow
+    /// would be missing, or both drawn, for a frame or two. Polling every millisecond while it happens, and
+    /// switching shadows right away, gets the overlay's change into that same frame.
+    private func watchRealWindow(_ session: DragSession, timeout: CFTimeInterval, until arrived: @escaping (CGRect?) -> Bool,
+                                 then action: @escaping () -> Void) {
+        watcher?.cancel()
+        let start = CACurrentMediaTime()
+        let timer = DispatchSource.makeTimerSource(flags: .strict, queue: .main)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(1), leeway: .nanoseconds(0))
+        timer.setEventHandler { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.session === session else {
+                    timer.cancel()
+                    return
+                }
+                guard arrived(WindowLocator.frame(of: session.window.id)) || CACurrentMediaTime() - start > timeout else { return }
+                timer.cancel()
+                self.watcher = nil
+                action()
+            }
+        }
+        watcher = timer
+        timer.resume()
+    }
+
+    private static func offset(_ frame: CGRect?, from reference: CGRect?) -> CGFloat {
+        guard let frame, let reference else { return 0 }
+        return max(abs(frame.minX - reference.minX), abs(frame.minY - reference.minY))
+    }
+
+    /// Redraws right away instead of at the next tick: WindowServer is about to composite the frame the real
+    /// window moved in, and the overlay's change has to make it into that same frame.
+    private func setOverlayShadow(_ on: Bool, _ session: DragSession) {
+        session.overlayShadow = on
+        renderer.shadowOpacity = on && settings.shadow ? 1 : 0
+        overlays.forEach { $0.render() }
     }
 
     /// Bottom-right corner of all screens: the window is left with 1 pt visible,
@@ -641,6 +676,8 @@ final class WobblyController: NSObject {
     }
 
     private func clearOverlays() {
+        watcher?.cancel()
+        watcher = nil
         renderer.clearScene()
         overlays.forEach {
             $0.render()

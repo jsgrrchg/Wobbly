@@ -40,9 +40,9 @@ fragment float4 windowFragment(VOut in [[stage_in]],
                                texture2d<float> texture [[texture(0)]],
                                constant Uniforms &u [[buffer(1)]]) {
     constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float4 color = texture.sample(s, in.uv * u.uvScale + u.uvOffset);
     bool inShadow = any(in.uv < 0.0) || any(in.uv > 1.0);
-    if (inShadow && u.shadow == 0.0) { return float4(0.0); }
-    return texture.sample(s, in.uv * u.uvScale + u.uvOffset);
+    return inShadow ? color * u.shadow : color;
 }
 """
 
@@ -59,8 +59,9 @@ private struct Uniforms {
 @MainActor
 final class MeshRenderer {
     let device: MTLDevice
-    /// Off while the real window (with its own shadow) is still underneath, so the two don't add up.
-    var shadowEnabled = true
+    /// 0 while the real window (with its own shadow) is still underneath, so the two don't add up;
+    /// in between while handing over to or from it.
+    var shadowOpacity: Float = 1
     private(set) var hasScene = false
     /// Bounding box of the scene (shadow included), in global CG coordinates.
     private(set) var sceneBounds = CGRect.null
@@ -183,7 +184,7 @@ final class MeshRenderer {
                 size: SIMD2(Float(screenRect.width), Float(screenRect.height)),
                 uvScale: uvScale,
                 uvOffset: uvOffset,
-                shadow: shadowEnabled ? 1 : 0)
+                shadow: shadowOpacity)
             encoder.setRenderPipelineState(windowPipeline)
             encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
             encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
