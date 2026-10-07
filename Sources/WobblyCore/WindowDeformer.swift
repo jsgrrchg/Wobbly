@@ -40,6 +40,22 @@ extension WindowDeformer {
         }
     }
 
+    /// The `fillVertices` grid without margin plus a ring of vertices `outset` points past each edge, where the
+    /// captured window shadow is drawn: (tilesX + 3) × (tilesY + 3) vertices. The ring takes the displacement
+    /// of the nearest edge point, so the shadow follows the deformation; at rest the mapping is exact.
+    public func fillVertices(tilesX: Int, tilesY: Int, outset: (left: Float, top: Float, right: Float, bottom: Float),
+                             into out: inout [SIMD4<Float>]) {
+        out.removeAll(keepingCapacity: true)
+        let us = [-outset.left / size.x] + (0...tilesX).map { Float($0) / Float(tilesX) } + [1 + outset.right / size.x]
+        let vs = [-outset.top / size.y] + (0...tilesY).map { Float($0) / Float(tilesY) } + [1 + outset.bottom / size.y]
+        for v in vs {
+            for u in us {
+                let p = point(u: u, v: v)
+                out.append(SIMD4(p.x, p.y, u, v))
+            }
+        }
+    }
+
     public var maxDisplacement: Float {
         var result: Float = 0
         for j in 0...8 {

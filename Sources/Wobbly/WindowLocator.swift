@@ -14,19 +14,24 @@ struct WindowInfo {
     let frame: CGRect
 }
 
+/// One CGWindowList query (several ms with many windows) shared by every lookup made for the same event.
+final class WindowList {
+    fileprivate lazy var entries = WindowLocator.onScreenWindows()
+}
+
 enum WindowLocator {
     private static let ownPID = ProcessInfo.processInfo.processIdentifier
 
     /// Frontmost normal window (layer 0) under `point`. If the first thing there is a menu,
     /// the Dock or another special layer, returns nil so the click isn't hijacked.
-    static func window(at point: CGPoint) -> WindowInfo? {
-        window(near: point, margin: 0)
+    static func window(at point: CGPoint, in list: WindowList = WindowList()) -> WindowInfo? {
+        window(near: point, margin: 0, in: list)
     }
 
     /// Like `window(at:)` but accepting clicks up to `margin` points outside the frame,
     /// where macOS lets you grab the edges to resize.
-    static func window(near point: CGPoint, margin: CGFloat) -> WindowInfo? {
-        for entry in onScreenWindows() {
+    static func window(near point: CGPoint, margin: CGFloat, in list: WindowList = WindowList()) -> WindowInfo? {
+        for entry in list.entries {
             guard let info = parse(entry), info.pid != ownPID, info.frame.insetBy(dx: -margin, dy: -margin).contains(point) else { continue }
             if let alpha = entry[kCGWindowAlpha as String] as? Double, alpha < 0.01 { continue }
             let layer = entry[kCGWindowLayer as String] as? Int ?? 0
@@ -105,7 +110,7 @@ enum WindowLocator {
         return nil
     }
 
-    private static func onScreenWindows() -> [[String: Any]] {
+    fileprivate static func onScreenWindows() -> [[String: Any]] {
         CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     }
 

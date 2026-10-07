@@ -5,34 +5,61 @@
 import AppKit
 @preconcurrency import ApplicationServices
 
+@_silgen_name("_AXUIElementGetWindow")
+private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
+
 /// Access to other apps' windows through the public Accessibility API.
-/// Every call is IPC with the owning app, so they run on `queue` and never on the main thread.
+/// Every call is IPC with the owning app, so they run on that app's `queue` and never on the main thread.
 enum AXBridge {
-    static let queue = DispatchQueue(label: "wobbly.ax", qos: .userInteractive)
+    private static let queuesLock = NSLock()
+    private static var queues: [pid_t: DispatchQueue] = [:]
+
+    /// One serial queue per app: calls to the same app keep their order, but a slow app
+    /// can't hold up the window the user has just grabbed in another one.
+    static func queue(for pid: pid_t) -> DispatchQueue {
+        queuesLock.lock()
+        defer { queuesLock.unlock() }
+        if let queue = queues[pid] { return queue }
+        let queue = DispatchQueue(label: "wobbly.ax.\(pid)", qos: .userInteractive)
+        queues[pid] = queue
+        return queue
+    }
+
+    static func queue(for element: AXUIElement) -> DispatchQueue {
+        var pid: pid_t = 0
+        AXUIElementGetPid(element, &pid)
+        return queue(for: pid)
+    }
 
     static func findWindow(_ info: WindowInfo, hitPoint: CGPoint) -> AXUIElement? {
         let app = AXUIElementCreateApplication(info.pid)
         AXUIElementSetMessagingTimeout(app, 0.25)
 
         var value: CFTypeRef?
-        if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
-           let windows = value as? [AXUIElement] {
-            for window in windows {
-                guard let frame = frame(of: window) else { continue }
-                if abs(frame.minX - info.frame.minX) <= 2, abs(frame.minY - info.frame.minY) <= 2,
-                   abs(frame.width - info.frame.width) <= 2, abs(frame.height - info.frame.height) <= 2 {
-                    return window
-                }
-            }
+        let windows = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success
+            ? value as? [AXUIElement] ?? [] : []
+        // Exact match: identical frames are common (maximized or tiled windows of the same app on other Spaces).
+        if let exact = windows.first(where: { windowID(of: $0) == info.id }) { return exact }
+
+        // Fallback: what the app says is under the cursor can only be on the current Space.
+        if let hit = hitTest(info.pid, at: hitPoint, timeout: 0.25),
+           let window = role(of: hit) == kAXWindowRole as String ? hit : element(hit, kAXWindowAttribute) {
+            return window
         }
 
-        // Fallback: ask the app which of its elements is under the cursor and walk up to its window.
-        guard let element = hitTest(info.pid, at: hitPoint, timeout: 0.25) else { return nil }
-        if role(of: element) == kAXWindowRole as String { return element }
-        var window: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &window) == .success,
-              let window, CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
-        return (window as! AXUIElement)
+        // Last resort: frame match, but only if unambiguous. Guessing would park the wrong window.
+        let candidates = windows.filter { frame(of: $0).map { matches($0, info.frame) } ?? false }
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    /// CGWindowID behind an AX window (private, but stable for years and used by yabai, AeroSpace, AltTab…).
+    static func windowID(of window: AXUIElement) -> CGWindowID? {
+        var id: CGWindowID = 0
+        return _AXUIElementGetWindow(window, &id) == .success ? id : nil
+    }
+
+    private static func matches(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.minX - b.minX) <= 2 && abs(a.minY - b.minY) <= 2 && abs(a.width - b.width) <= 2 && abs(a.height - b.height) <= 2
     }
 
     private static let draggableRoles: Set<String> = [
@@ -44,11 +71,12 @@ enum AXBridge {
     /// windows without a close button (games, borderless windows) are skipped.
     /// Called from the event tap, so it uses a short timeout.
     static func titleBarHeight(_ info: WindowInfo, at point: CGPoint) -> CGFloat? {
-        guard let hit = hitTest(info.pid, at: point, timeout: 0.1),
+        guard let hit = hitTest(info.pid, at: point, timeout: 0.1).map({ limit($0, 0.1) }),
               let role = role(of: hit), draggableRoles.contains(role) else { return nil }
 
-        let window = role == kAXWindowRole as String ? hit : element(hit, kAXWindowAttribute)
-        guard let window, let close = element(window, kAXCloseButtonAttribute), let closeFrame = frame(of: close),
+        let window = role == kAXWindowRole as String ? hit : element(hit, kAXWindowAttribute).map { limit($0, 0.1) }
+        guard let window, let close = element(window, kAXCloseButtonAttribute).map({ limit($0, 0.1) }),
+              let closeFrame = frame(of: close),
               info.frame.contains(CGPoint(x: closeFrame.midX, y: closeFrame.midY)) else { return nil }
 
         let height = 2 * (closeFrame.midY - info.frame.minY)
@@ -65,6 +93,14 @@ enum AXBridge {
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success else { return nil }
         return hit
+    }
+
+    /// Elements obtained from another one don't inherit its messaging timeout: without this, a busy app
+    /// could block the event tap for the system default of several seconds. Only for queries: windows
+    /// that will be moved keep the default so a slow app still gets the move.
+    private static func limit(_ element: AXUIElement, _ timeout: Float) -> AXUIElement {
+        AXUIElementSetMessagingTimeout(element, timeout)
+        return element
     }
 
     static func frame(of window: AXUIElement) -> CGRect? {
@@ -85,6 +121,8 @@ enum AXBridge {
     }
 
     static func raise(_ window: AXUIElement, pid: pid_t) {
+        // Make it the app's main window first, so activating the app doesn't jump to a Space with another of its windows.
+        AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
         AXUIElementPerformAction(window, kAXRaiseAction as CFString)
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
@@ -135,7 +173,7 @@ final class CoalescingMover {
         lock.unlock()
         guard needsSchedule else { return }
 
-        AXBridge.queue.async { [self] in
+        AXBridge.queue(for: window).async { [self] in
             lock.lock()
             let job = pending
             pending = nil

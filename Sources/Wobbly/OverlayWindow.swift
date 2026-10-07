@@ -26,7 +26,13 @@ final class OverlayWindow: NSObject, MTKViewDelegate {
         view.enableSetNeedsDisplay = false
         view.framebufferOnly = true
         view.layer?.isOpaque = false
-        (view.layer as? CAMetalLayer)?.maximumDrawableCount = 2
+        if let layer = view.layer as? CAMetalLayer {
+            // Hand each frame to WindowServer as soon as it's drawn instead of at the next vsync, so a redraw made
+            // mid-frame (when the real window moves) lands in the frame being composited. A third drawable keeps
+            // that extra redraw from blocking on the next tick's.
+            layer.displaySyncEnabled = false
+            layer.maximumDrawableCount = 3
+        }
 
         window = NSWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isOpaque = false
