@@ -29,19 +29,35 @@ final class WindowCapture {
     private var content: SCShareableContent?
     private var refreshTask: Task<SCShareableContent?, Never>?
 
-    /// Fetching the shareable content list takes tens of ms, so it is cached and refreshed
-    /// ahead of time (at launch and when the modifier is pressed).
+    /// Fetching the shareable content list takes tens of ms, so it is cached and refreshed ahead of time
+    /// (at launch, on app activation, Space changes and new windows). It includes windows on every Space,
+    /// so switching Spaces doesn't leave the cache without the windows the user is about to drag.
     @discardableResult
     func refreshContent() async -> SCShareableContent? {
         if let refreshTask { return await refreshTask.value }
         let task = Task<SCShareableContent?, Never> {
-            try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+            try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
         }
         refreshTask = task
         let result = await task.value
         refreshTask = nil
         if let result { content = result }
         return result
+    }
+
+    /// The first capture in a process is much slower than the rest: take a tiny one at launch
+    /// so the first drag doesn't pay for it.
+    func warmUp() async {
+        guard let window = await refreshContent()?.windows.first(where: {
+            $0.isOnScreen && $0.windowLayer == 0 && $0.frame.width >= 1 && $0.frame.height >= 1
+        }) else { return }
+        let config = SCStreamConfiguration()
+        config.width = 16
+        config.height = 16
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.showsCursor = false
+        _ = try? await SCScreenshotManager.captureSampleBuffer(
+            contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: config)
     }
 
     func capture(_ info: WindowInfo) async throws -> CapturedFrame {

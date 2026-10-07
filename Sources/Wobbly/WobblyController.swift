@@ -113,11 +113,23 @@ final class WobblyController: NSObject {
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         windowObserver.onResize = { [weak self] element, pid in self?.windowResized(element, pid: pid) }
+        windowObserver.onWindowCreated = { [weak self] in self?.refreshCaptureContent() }
+        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(
+                self, selector: #selector(refreshCaptureContent), name: name, object: nil)
+        }
     }
 
     func warmUp() {
-        Task { await capture.refreshContent() }
+        Task { await capture.warmUp() }
         windowObserver.start()
+    }
+
+    /// Keeps the capture's window list current so a drag never has to wait for it. Skipped mid-gesture:
+    /// raising the grabbed window activates its app, and the refresh would compete with that capture.
+    @objc private func refreshCaptureContent() {
+        guard session == nil, pendingClick == nil else { return }
+        Task { await capture.refreshContent() }
     }
 
     /// Returns true if the event should be swallowed.
@@ -125,8 +137,9 @@ final class WobblyController: NSObject {
         if event.getIntegerValueField(.eventSourceUserData) == Self.replayMarker { return false }
         switch type {
         case .leftMouseDown:
-            let consumed = mouseDown(event)
-            resizeWatch = consumed ? nil : watchForResize(at: event.location)
+            let windows = WindowList()
+            let consumed = mouseDown(event, windows: windows)
+            resizeWatch = consumed ? nil : watchForResize(at: event.location, windows: windows)
             return consumed
         case .leftMouseDragged:
             return mouseDragged(to: event.location)
@@ -151,7 +164,7 @@ final class WobblyController: NSObject {
 
     // MARK: - Mouse
 
-    private func mouseDown(_ event: CGEvent) -> Bool {
+    private func mouseDown(_ event: CGEvent, windows: WindowList) -> Bool {
         guard settings.enabled else { return false }
         let point = event.location
         let usesModifier = settings.modifier.matches(event.flags)
@@ -176,7 +189,7 @@ final class WobblyController: NSObject {
             if frame.contains(point) { finishImmediately(current) }
         }
 
-        guard let info = WindowLocator.window(at: point) else { return false }
+        guard let info = WindowLocator.window(at: point, in: windows) else { return false }
         if usesModifier {
             beginSession(info, at: point, titleBarHeight: nil)
             return true
@@ -267,7 +280,7 @@ final class WobblyController: NSObject {
     }
 
     private func beginSession(_ info: WindowInfo, at point: CGPoint, titleBarHeight: CGFloat?) {
-        if let previous = self.session { finishImmediately(previous) }
+        if let previous = self.session { finishImmediately(previous, wait: false) }
         let session = DragSession(window: info, cursor: point)
         session.titleBarHeight = titleBarHeight
         self.session = session
@@ -298,9 +311,9 @@ final class WobblyController: NSObject {
 
     // MARK: - Maximize and resize effects
 
-    private func watchForResize(at point: CGPoint) -> ResizeWatch? {
+    private func watchForResize(at point: CGPoint, windows: WindowList) -> ResizeWatch? {
         guard settings.enabled, settings.resizeEffect, session == nil,
-              let info = WindowLocator.window(near: point, margin: 8) else { return nil }
+              let info = WindowLocator.window(near: point, margin: 8, in: windows) else { return nil }
         return ResizeWatch(window: info, point: point)
     }
 
@@ -325,7 +338,7 @@ final class WobblyController: NSObject {
         let pickup = SIMD2<Float>(Float(watch.point.x - old.minX), Float(watch.point.y - old.minY))
         let travel = SIMD2<Float>(Float(endPoint.x - watch.point.x), Float(endPoint.y - watch.point.y))
         let physics = settings.physics
-        AXBridge.queue.async { [weak self] in
+        AXBridge.queue(for: info.pid).async { [weak self] in
             guard let axWindow = AXBridge.findWindow(info, hitPoint: endPoint) else { return }
             Task { @MainActor in
                 // GNOME uses 20×20 tiles for this effect.
@@ -351,7 +364,7 @@ final class WobblyController: NSObject {
     private func checkZoom() {
         guard let (element, pid) = pendingZoom else { return }
         pendingZoom = nil
-        AXBridge.queue.async { [weak self] in
+        AXBridge.queue(for: pid).async { [weak self] in
             guard let frame = AXBridge.frame(of: element) else { return }
             Task { @MainActor in self?.playZoomEffect(element, pid: pid, frame: frame) }
         }
@@ -407,7 +420,7 @@ final class WobblyController: NSObject {
 
     private func resolveAXWindow(for session: DragSession, hitPoint: CGPoint) {
         let info = session.window
-        AXBridge.queue.async { [weak self] in
+        AXBridge.queue(for: info.pid).async { [weak self] in
             let axWindow = AXBridge.findWindow(info, hitPoint: hitPoint)
             let fullScreen = axWindow.map(AXBridge.isFullScreen) ?? false
             if let axWindow, !fullScreen { AXBridge.raise(axWindow, pid: info.pid) }
@@ -548,14 +561,14 @@ final class WobblyController: NSObject {
             session.parkRequest = (frame, CACurrentMediaTime())
         }
         let parking = parkingPoint()
-        AXBridge.queue.async { AXBridge.setPosition(axWindow, parking) }
+        AXBridge.queue(for: axWindow).async { AXBridge.setPosition(axWindow, parking) }
     }
 
     private func beginRestore(_ session: DragSession) {
         session.hideCountdown = nil
         let target = session.origin
         if let axWindow = session.axWindow {
-            AXBridge.queue.async { AXBridge.setPosition(axWindow, target) }
+            AXBridge.queue(for: axWindow).async { AXBridge.setPosition(axWindow, target) }
         }
         session.phase = .restoring(deadline: CACurrentMediaTime() + 0.3)
     }
@@ -570,7 +583,7 @@ final class WobblyController: NSObject {
     private func abort(_ session: DragSession) {
         if session.hidden, let axWindow = session.axWindow {
             let target = session.origin
-            AXBridge.queue.async { AXBridge.setPosition(axWindow, target) }
+            AXBridge.queue(for: axWindow).async { AXBridge.setPosition(axWindow, target) }
         }
         session.phase = .aborted
         session.deformer = nil
@@ -578,10 +591,17 @@ final class WobblyController: NSObject {
         if !session.mouseDown { self.session = nil }
     }
 
-    private func finishImmediately(_ session: DragSession) {
+    /// `wait` blocks until the window is back: needed when a click is about to land on it or the app is quitting.
+    /// Grabbing another window doesn't need it, and waiting there would freeze the event tap.
+    private func finishImmediately(_ session: DragSession, wait: Bool = true) {
         if let axWindow = session.axWindow, session.deformer != nil {
             let target = session.origin
-            AXBridge.queue.sync { AXBridge.setPosition(axWindow, target) }
+            let queue = AXBridge.queue(for: axWindow)
+            if wait {
+                queue.sync { AXBridge.setPosition(axWindow, target) }
+            } else {
+                queue.async { AXBridge.setPosition(axWindow, target) }
+            }
         }
         tearDown()
     }

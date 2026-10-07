@@ -9,9 +9,27 @@ import AppKit
 private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
 
 /// Access to other apps' windows through the public Accessibility API.
-/// Every call is IPC with the owning app, so they run on `queue` and never on the main thread.
+/// Every call is IPC with the owning app, so they run on that app's `queue` and never on the main thread.
 enum AXBridge {
-    static let queue = DispatchQueue(label: "wobbly.ax", qos: .userInteractive)
+    private static let queuesLock = NSLock()
+    private static var queues: [pid_t: DispatchQueue] = [:]
+
+    /// One serial queue per app: calls to the same app keep their order, but a slow app
+    /// can't hold up the window the user has just grabbed in another one.
+    static func queue(for pid: pid_t) -> DispatchQueue {
+        queuesLock.lock()
+        defer { queuesLock.unlock() }
+        if let queue = queues[pid] { return queue }
+        let queue = DispatchQueue(label: "wobbly.ax.\(pid)", qos: .userInteractive)
+        queues[pid] = queue
+        return queue
+    }
+
+    static func queue(for element: AXUIElement) -> DispatchQueue {
+        var pid: pid_t = 0
+        AXUIElementGetPid(element, &pid)
+        return queue(for: pid)
+    }
 
     static func findWindow(_ info: WindowInfo, hitPoint: CGPoint) -> AXUIElement? {
         let app = AXUIElementCreateApplication(info.pid)
@@ -53,11 +71,12 @@ enum AXBridge {
     /// windows without a close button (games, borderless windows) are skipped.
     /// Called from the event tap, so it uses a short timeout.
     static func titleBarHeight(_ info: WindowInfo, at point: CGPoint) -> CGFloat? {
-        guard let hit = hitTest(info.pid, at: point, timeout: 0.1),
+        guard let hit = hitTest(info.pid, at: point, timeout: 0.1).map({ limit($0, 0.1) }),
               let role = role(of: hit), draggableRoles.contains(role) else { return nil }
 
-        let window = role == kAXWindowRole as String ? hit : element(hit, kAXWindowAttribute)
-        guard let window, let close = element(window, kAXCloseButtonAttribute), let closeFrame = frame(of: close),
+        let window = role == kAXWindowRole as String ? hit : element(hit, kAXWindowAttribute).map { limit($0, 0.1) }
+        guard let window, let close = element(window, kAXCloseButtonAttribute).map({ limit($0, 0.1) }),
+              let closeFrame = frame(of: close),
               info.frame.contains(CGPoint(x: closeFrame.midX, y: closeFrame.midY)) else { return nil }
 
         let height = 2 * (closeFrame.midY - info.frame.minY)
@@ -74,6 +93,14 @@ enum AXBridge {
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success else { return nil }
         return hit
+    }
+
+    /// Elements obtained from another one don't inherit its messaging timeout: without this, a busy app
+    /// could block the event tap for the system default of several seconds. Only for queries: windows
+    /// that will be moved keep the default so a slow app still gets the move.
+    private static func limit(_ element: AXUIElement, _ timeout: Float) -> AXUIElement {
+        AXUIElementSetMessagingTimeout(element, timeout)
+        return element
     }
 
     static func frame(of window: AXUIElement) -> CGRect? {
@@ -146,7 +173,7 @@ final class CoalescingMover {
         lock.unlock()
         guard needsSchedule else { return }
 
-        AXBridge.queue.async { [self] in
+        AXBridge.queue(for: window).async { [self] in
             lock.lock()
             let job = pending
             pending = nil
