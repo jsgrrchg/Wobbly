@@ -193,11 +193,13 @@ final class WobblyController: NSObject {
         // The click is held back until we see whether the mouse moves; if it doesn't, it is replayed untouched.
         let local = CGPoint(x: point.x - info.frame.minX, y: point.y - info.frame.minY)
         guard local.y >= Self.resizeBorder, local.y <= 120,
-              local.x >= Self.resizeBorder, info.frame.width - local.x >= Self.resizeBorder,
-              let height = AXBridge.titleBarHeight(info, at: point),
+              local.x >= Self.resizeBorder, info.frame.width - local.x >= Self.resizeBorder else { return false }
+        // Start capturing before asking the app about its title bar: the capture is what takes longest, and
+        // it doesn't depend on the answer. If the click turns out not to be on the title bar, it's discarded.
+        prefetch(info)
+        guard let height = AXBridge.titleBarHeight(info, at: point),
               let downEvent = event.copy() else { return false }
         pendingClick = PendingClick(window: info, point: point, titleBarHeight: height, downEvent: downEvent)
-        prefetch(info)
         return true
     }
 
