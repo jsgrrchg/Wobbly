@@ -72,16 +72,28 @@ enum AXBridge {
     /// Called from the event tap, so it uses a short timeout.
     static func titleBarHeight(_ info: WindowInfo, at point: CGPoint) -> CGFloat? {
         guard let hit = hitTest(info.pid, at: point, timeout: 0.1).map({ limit($0, 0.1) }),
-              let role = role(of: hit), draggableRoles.contains(role) else { return nil }
-
-        let window = role == kAXWindowRole as String ? hit : element(hit, kAXWindowAttribute).map { limit($0, 0.1) }
-        guard let window, let close = element(window, kAXCloseButtonAttribute).map({ limit($0, 0.1) }),
+              let window = draggableWindow(from: hit),
+              let close = element(window, kAXCloseButtonAttribute).map({ limit($0, 0.1) }),
               let closeFrame = frame(of: close),
               info.frame.contains(CGPoint(x: closeFrame.midX, y: closeFrame.midY)) else { return nil }
 
         let height = 2 * (closeFrame.midY - info.frame.minY)
         guard height >= 20, height <= 120, point.y - info.frame.minY <= height else { return nil }
         return height
+    }
+
+    /// Walks up from `hit` to its window and returns it only if every element on the way is draggable.
+    /// The hit test returns the deepest element, which is often plain text or a group inside a control:
+    /// the title of a Chromium tab is an `AXStaticText` whose parent is the tab itself (`AXRadioButton`).
+    private static func draggableWindow(from hit: AXUIElement) -> AXUIElement? {
+        var current = hit
+        for _ in 0..<8 {
+            guard let role = role(of: current), draggableRoles.contains(role) else { return nil }
+            if role == kAXWindowRole as String { return current }
+            guard let parent = element(current, kAXParentAttribute) else { return nil }
+            current = limit(parent, 0.1)
+        }
+        return nil
     }
 
     /// Asks the owning app rather than the system-wide element, so transparent layers from other apps
