@@ -18,6 +18,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Wobbly" "$APP/Contents/MacOS/Wobbly"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# Metal shaders and textures of the close effects (SwiftPM resource bundle, found in Contents/Resources).
+cp -R "$BIN_DIR/Wobbly_WobblyEffects.bundle" "$APP/Contents/Resources/"
 
 # Icon Composer icon: actool generates Assets.car (Liquid Glass) and a fallback Wobbly.icns.
 xcrun actool Resources/Wobbly.icon --compile "$APP/Contents/Resources" --platform macosx \

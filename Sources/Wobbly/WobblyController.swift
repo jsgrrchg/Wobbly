@@ -86,6 +86,8 @@ final class WobblyController: NSObject {
     private let capture = WindowCapture()
     private let mover = CoalescingMover()
     private let windowObserver = WindowObserver()
+    private let closePlayer: CloseEffectPlayer?
+    private var closeTrigger: CloseEffectTrigger?
     private var overlays: [OverlayWindow] = []
     private var session: DragSession?
     private var pendingClick: PendingClick?
@@ -103,7 +105,11 @@ final class WobblyController: NSObject {
         guard let renderer = MeshRenderer() else { return nil }
         self.settings = settings
         self.renderer = renderer
+        closePlayer = CloseEffectPlayer.make()
         super.init()
+        closeTrigger = closePlayer.map { player in
+            CloseEffectTrigger(settings: settings, capture: capture, player: player, isBusy: { [weak self] in self?.session != nil })
+        }
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         windowObserver.onResize = { [weak self] element, pid in self?.windowResized(element, pid: pid) }
@@ -117,6 +123,11 @@ final class WobblyController: NSObject {
     func warmUp() {
         Task { await capture.warmUp() }
         windowObserver.start()
+    }
+
+    /// Compiles the shaders of the chosen close effect(s) in the background.
+    func closeEffectChanged() {
+        closePlayer?.warmUp(settings.closeEffect)
     }
 
     /// Keeps the capture's window list current so a drag never has to wait for it. Skipped mid-gesture:
@@ -134,15 +145,20 @@ final class WobblyController: NSObject {
             let windows = WindowList()
             let consumed = mouseDown(event, windows: windows)
             resizeWatch = consumed ? nil : watchForResize(at: event.location, windows: windows)
+            if !consumed { closeTrigger?.mouseDown(at: event.location, windows: windows) }
             return consumed
         case .leftMouseDragged:
             return mouseDragged(to: event.location)
         case .leftMouseUp:
             let consumed = mouseUp(event)
-            if !consumed { checkForResize(endingAt: event.location) }
+            if !consumed {
+                checkForResize(endingAt: event.location)
+                closeTrigger?.mouseUp()
+            }
             return consumed
         case .flagsChanged:
             flagsChanged(event.flags)
+            closeTrigger?.flagsChanged(event.flags)
             return false
         default:
             return false
@@ -153,6 +169,7 @@ final class WobblyController: NSObject {
     func cancelAll() {
         pendingClick = nil
         resizeWatch = nil
+        closeTrigger?.cancelAll()
         if let session { finishImmediately(session) }
     }
 

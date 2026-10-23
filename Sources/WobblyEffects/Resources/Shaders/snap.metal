@@ -1,0 +1,72 @@
+// Snap of Disintegration: dissolves the window into a cloud of dust.
+// Ported from Burn-My-Windows (resources/shaders/snap.frag).
+// SPDX-FileCopyrightText: Simon Schneegans <code@simonschneegans.de>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+constant float DUST_LAYERS      = 4.0;
+constant float GROW_INTENSITY   = 0.05;
+constant float SHRINK_INTENSITY = 0.05;
+constant float WIND_INTENSITY   = 0.05;
+constant float ACTOR_SCALE      = 1.2;
+constant float PADDING          = ACTOR_SCALE / 2.0 - 0.5;
+//@@
+  float4 run() {
+    // We simply inverse the progress for opening windows.
+    float progress = uForOpening ? uProgress : 1.0 - uProgress;
+    float gradient = iTexCoord.y * ACTOR_SCALE - PADDING;
+    progress       = 2.0 - gradient - 2.0 * progress;
+    progress       = progress + 0.25 - 0.5 * simplex2D((iTexCoord + uSeed) * 2.0);
+    progress       = pow(max(0.0, progress), 2.0);
+
+    vec4 oColor = vec4(0.0);
+
+    for (float i = 0.0; i < DUST_LAYERS; ++i) {
+
+      // Create a random direction.
+      float factor   = DUST_LAYERS == 1.0 ? 0.0 : i / (DUST_LAYERS - 1.0);
+      float angle    = 123.123 * (uSeed.x + factor);
+      vec2 direction = vec2(1.0, 0.0);
+      direction      = rotateVec(direction, angle);
+
+      // Flip direction for one side of the window.
+      vec2 coords = iTexCoord * ACTOR_SCALE - PADDING - 0.5;
+      if (getWinding(direction, coords) > 0.0) {
+        direction *= -1.0;
+      }
+
+      // Flip direction for half the layers.
+      if (factor > 0.5) {
+        direction *= -1.0;
+      }
+
+      // We grow the layer along the random direction, shrink it orthogonally to it and scale it up slightly.
+      float dist  = distToLine(vec2(0.0), direction, coords);
+      vec2 grow   = direction * dist * mix(0.0, GROW_INTENSITY, progress);
+      vec2 shrink = vec2(direction.y, -direction.x) * dist * mix(0.0, SHRINK_INTENSITY, progress);
+      float scale = mix(1.0, 1.05, factor * progress);
+      coords      = (coords + grow + shrink) / scale;
+
+      // Add some wind.
+      coords.x += WIND_INTENSITY * progress * (uForOpening ? 1.0 : -1.0);
+
+      // Now check whether there is actually something in the current dust layer at the coords position.
+      vec2 dustCoords = (coords + uSeed) * uSize / uDustScale / 100.0;
+      vec2 dustMap    = aux2D(dustCoords).rg;
+      float dustGroup = floor(dustMap.g * DUST_LAYERS * 0.999);
+
+      if (dustGroup == i) {
+        // Get the window color.
+        vec4 windowColor = getInputColor(coords + 0.5);
+
+        // Fade the window color to uDustColor.
+        vec3 dustColor  = mix(windowColor.rgb, uDustColor.rgb, uDustColor.a);
+        windowColor.rgb = mix(windowColor.rgb, dustColor, progress);
+
+        // Dissolve and blend the layers.
+        if (dustMap.x - progress > 0.0) {
+          oColor = windowColor;
+        }
+      }
+    }
+    return oColor;
+  }

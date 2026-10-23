@@ -5,6 +5,7 @@
 import AppKit
 import ApplicationServices
 import WobblyCore
+import WobblyEffects
 
 enum Permissions {
     static func accessibilityGranted(prompt: Bool) -> Bool {
@@ -39,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSLog("Wobbly: Metal unavailable")
             return
         }
+        // Shader compilation needs no permission: start it now so the first close doesn't wait for the compiler.
+        controller?.closeEffectChanged()
         if !Permissions.screenCaptureGranted { CGRequestScreenCaptureAccess() }
         if !startTap(prompt: true) {
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
@@ -158,6 +161,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let shadow = NSMenuItem(title: "Shadow", action: #selector(toggleShadow), keyEquivalent: "")
         shadow.state = settings.shadow ? .on : .off
         menu.addItem(shadow)
+
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem.sectionHeader(title: "Close Effect"))
+        let closeMenu = NSMenu()
+        let currentClose = settings.closeEffect
+        func addCloseEntry(_ title: String, _ choice: CloseEffectChoice) {
+            let entry = NSMenuItem(title: title, action: #selector(selectCloseEffect(_:)), keyEquivalent: "")
+            entry.representedObject = choice.rawValue
+            entry.state = currentClose == choice ? .on : .off
+            entry.target = self
+            closeMenu.addItem(entry)
+        }
+        addCloseEntry("Off", .off)
+        addCloseEntry("Random", .random)
+        closeMenu.addItem(.separator())
+        for effect in CloseEffect.allCases {
+            addCloseEntry(effect.title, .effect(effect))
+        }
+        let closeTitle: String
+        switch currentClose {
+        case .off: closeTitle = "Off"
+        case .random: closeTitle = "Random"
+        case .effect(let effect): closeTitle = effect.title
+        }
+        let closeItem = NSMenuItem(title: "Effect: \(closeTitle)", action: nil, keyEquivalent: "")
+        closeItem.submenu = closeMenu
+        menu.addItem(closeItem)
+        addSlider(to: menu, "Duration", settings.closeDuration, Settings.closeSpeedRange, decimals: 2) { [unowned self] value in
+            settings.closeDuration = value
+        }
+
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Reset to Defaults", action: #selector(resetToDefaults), keyEquivalent: ""))
         menu.addItem(.separator())
 
@@ -211,6 +246,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func resetToDefaults() {
         settings.resetToDefaults()
+        controller?.closeEffectChanged()
+    }
+
+    @objc private func selectCloseEffect(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String else { return }
+        settings.closeEffect = CloseEffectChoice(rawValue: raw)
+        controller?.closeEffectChanged()
     }
 
     @objc private func toggleTitleBarDrag() {

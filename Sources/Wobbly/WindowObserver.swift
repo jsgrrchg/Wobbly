@@ -30,6 +30,7 @@ final class WindowObserver {
     private func observe(_ pid: pid_t?) {
         guard let pid, pid != observedPID, pid != ProcessInfo.processInfo.processIdentifier else { return }
         stopObserving()
+        AXBridge.queue(for: pid).async { AXBridge.enableChromiumAccessibility(pid: pid) }
 
         var created: AXObserver?
         guard AXObserverCreate(pid, observerCallback, &created) == .success, let observer = created else { return }
