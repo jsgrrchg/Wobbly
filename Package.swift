@@ -9,7 +9,12 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .target(name: "WobblyCore"),
-        .executableTarget(name: "Wobbly", dependencies: ["WobblyCore"]),
+        // Window-close effects: Metal shaders ported from Burn-My-Windows.
+        .target(name: "WobblyEffects", resources: [.copy("Resources")]),
+        // Renders the effects headlessly: `swift run wobbly-effects-preview --check`.
+        .executableTarget(name: "wobbly-effects-preview", dependencies: ["WobblyEffects"], path: "Sources/WobblyEffectsPreview"),
+        .executableTarget(name: "Wobbly", dependencies: ["WobblyCore", "WobblyEffects"]),
         .testTarget(name: "WobblyCoreTests", dependencies: ["WobblyCore"]),
+        .testTarget(name: "WobblyEffectsTests", dependencies: ["WobblyEffects"]),
     ]
 )

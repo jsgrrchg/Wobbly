@@ -5,16 +5,26 @@
 import AppKit
 import MetalKit
 
+/// What an overlay draws: a scene in global coordinates, rendered once per screen it touches.
+@MainActor
+protocol OverlayContent: AnyObject {
+    var device: MTLDevice { get }
+    var hasScene: Bool { get }
+    /// Bounding box of the scene, in global CG coordinates.
+    var sceneBounds: CGRect { get }
+    func draw(in view: MTKView, screenRect: CGRect)
+}
+
 /// Transparent, full-screen, click-through window where the "jelly" window is drawn.
 @MainActor
 final class OverlayWindow: NSObject, MTKViewDelegate {
     let screenRect: CGRect
     private let window: NSWindow
     private let view: MTKView
-    private unowned let renderer: MeshRenderer
+    private unowned let renderer: OverlayContent
     private var showingContent = false
 
-    init(screen: NSScreen, renderer: MeshRenderer) {
+    init(screen: NSScreen, renderer: OverlayContent) {
         self.renderer = renderer
         screenRect = screen.cgFrame
 
@@ -53,6 +63,13 @@ final class OverlayWindow: NSObject, MTKViewDelegate {
     var displayLinkWindow: NSWindow { window }
 
     func show() {
+        window.orderFrontRegardless()
+    }
+
+    /// Puts the overlay in front with nothing drawn on it.
+    func showBlank() {
+        showingContent = true
+        view.draw()
         window.orderFrontRegardless()
     }
 

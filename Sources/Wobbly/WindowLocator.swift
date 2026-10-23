@@ -120,6 +120,21 @@ enum WindowLocator {
         return parse(entry)?.frame
     }
 
+    /// Frame and opacity of an on-screen window; nil if it is not on screen (closed, minimized, hidden or on another Space).
+    /// macOS fades a window out when it closes or is hidden, and the opacity shows it before the window is gone.
+    static func snapshot(of id: CGWindowID) -> (frame: CGRect, alpha: Double)? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]],
+              let entry = list.first, let frame = parse(entry)?.frame else { return nil }
+        return (frame, entry[kCGWindowAlpha as String] as? Double ?? 1)
+    }
+
+    /// Whether the window still exists anywhere, even minimized, hidden or on another Space. This is the costly query
+    /// (it lists every window), so it is only used once a window has left the screen.
+    static func exists(_ id: CGWindowID) -> Bool {
+        let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        return list.contains { ($0[kCGWindowNumber as String] as? Int) == Int(id) }
+    }
+
     private static func parse(_ entry: [String: Any]) -> WindowInfo? {
         guard let number = entry[kCGWindowNumber as String] as? Int,
               let pid = entry[kCGWindowOwnerPID as String] as? Int,

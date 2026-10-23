@@ -58,6 +58,15 @@ enum AXBridge {
         return _AXUIElementGetWindow(window, &id) == .success ? id : nil
     }
 
+    /// The window of `pid` that has keyboard focus (the one ⌘W would close).
+    static func focusedWindow(pid: pid_t) -> WindowInfo? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        guard let window = element(app, kAXFocusedWindowAttribute), let id = windowID(of: window),
+              let frame = frame(of: window) else { return nil }
+        return WindowInfo(id: id, pid: pid, frame: frame)
+    }
+
     private static func matches(_ a: CGRect, _ b: CGRect) -> Bool {
         abs(a.minX - b.minX) <= 2 && abs(a.minY - b.minY) <= 2 && abs(a.width - b.width) <= 2 && abs(a.height - b.height) <= 2
     }
@@ -71,15 +80,50 @@ enum AXBridge {
     /// windows without a close button (games, borderless windows) are skipped.
     /// Called from the event tap, so it uses a short timeout.
     static func titleBarHeight(_ info: WindowInfo, at point: CGPoint) -> CGFloat? {
+        enableChromiumAccessibility(pid: info.pid)
         guard let hit = hitTest(info.pid, at: point, timeout: 0.1).map({ limit($0, 0.1) }),
-              let window = draggableWindow(from: hit),
-              let close = element(window, kAXCloseButtonAttribute).map({ limit($0, 0.1) }),
-              let closeFrame = frame(of: close),
-              info.frame.contains(CGPoint(x: closeFrame.midX, y: closeFrame.midY)) else { return nil }
+              let hitWindow = draggableWindow(from: hit) else { return nil }
+        // Chromium's top strip hangs from an internal pseudo-window with no close button: use the real one.
+        let window = windowID(of: hitWindow) == info.id ? hitWindow : realWindow(withID: info.id, pid: info.pid) ?? hitWindow
+        guard let close = element(window, kAXCloseButtonAttribute).map({ limit($0, 0.1) }),
+              let closeFrame = frame(of: close) else { return nil }
 
-        let height = 2 * (closeFrame.midY - info.frame.minY)
+        let closeCenter = CGPoint(x: closeFrame.midX, y: closeFrame.midY)
+        guard info.frame.contains(closeCenter) else {
+            // iTerm2 (Minimal theme) reports its close button outside the window. Without it the bar height is
+            // unknown: take the standard one, and only for the empty bar (a tab title is an `AXStaticText`).
+            guard role(of: hit) == kAXWindowRole as String, point.y - info.frame.minY <= unknownTitleBarHeight else { return nil }
+            return unknownTitleBarHeight
+        }
+
+        let height = 2 * (closeCenter.y - info.frame.minY)
         guard height >= 20, height <= 120, point.y - info.frame.minY <= height else { return nil }
         return height
+    }
+
+    private static let unknownTitleBarHeight: CGFloat = 28
+
+    private static var manualAccessibilityPIDs: Set<pid_t> = []
+
+    /// Chromium and Electron apps expose an incomplete tree (windows with no close button, missing groups) until
+    /// a client asks for it. Other apps ignore the attribute. Done once per app.
+    static func enableChromiumAccessibility(pid: pid_t) {
+        queuesLock.lock()
+        let isNew = manualAccessibilityPIDs.insert(pid).inserted
+        queuesLock.unlock()
+        guard isNew else { return }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.1)
+        AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    }
+
+    private static func realWindow(withID id: CGWindowID, pid: pid_t) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.1)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement] else { return nil }
+        return windows.first { windowID(of: $0) == id }.map { limit($0, 0.1) }
     }
 
     /// Walks up from `hit` to its window and returns it only if every element on the way is draggable.

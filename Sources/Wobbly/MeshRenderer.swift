@@ -57,7 +57,7 @@ private struct Uniforms {
 /// Draws the window capture, native shadow included, onto the deformed mesh: the shadow sits on an outer
 /// ring of the mesh, so it deforms along with the window. All overlays (one per screen) share the same scene.
 @MainActor
-final class MeshRenderer {
+final class MeshRenderer: OverlayContent {
     let device: MTLDevice
     /// 0 while the real window (with its own shadow) is still underneath, so the two don't add up;
     /// in between while handing over to or from it.

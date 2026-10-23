@@ -5,6 +5,7 @@
 import CoreGraphics
 import Foundation
 import WobblyCore
+import WobblyEffects
 
 enum DragModifier: String, CaseIterable {
     case controlCommand
@@ -68,6 +69,9 @@ final class Settings {
     static let speedupRange: ClosedRange<Double> = 2...40
     static let massRange: ClosedRange<Double> = 20...80
     static let tilesRange: ClosedRange<Double> = 3...20
+    /// Multiplies the default animation time of the close effects.
+    static let closeSpeedRange: ClosedRange<Double> = 0.25...3
+    static let defaultCloseEffect = CloseEffectChoice.effect(.fire)
 
     private static let defaultTilesX = 16
     private static let defaultTilesY = 14
@@ -140,12 +144,26 @@ final class Settings {
         set { defaults.set(newValue, forKey: "resizeEffect") }
     }
 
+    /// Effect played when a window is closed (a Burn-My-Windows shader), a random one, or none.
+    var closeEffect: CloseEffectChoice {
+        get { CloseEffectChoice(rawValue: defaults.string(forKey: "closeEffect")) }
+        set { defaults.set(newValue.rawValue, forKey: "closeEffect") }
+    }
+
+    /// Animation time of the close effects relative to the default of each effect.
+    var closeDuration: Double {
+        get { min(max(defaults.object(forKey: "closeDuration") as? Double ?? 1, Self.closeSpeedRange.lowerBound), Self.closeSpeedRange.upperBound) }
+        set { defaults.set(newValue, forKey: "closeDuration") }
+    }
+
     func resetToDefaults() {
         preset = .realistic
         tilesX = Self.defaultTilesX
         tilesY = Self.defaultTilesY
         maximizeEffect = true
         resizeEffect = false
+        closeEffect = Self.defaultCloseEffect
+        closeDuration = 1
     }
 
     private func float(_ key: String) -> Float? {

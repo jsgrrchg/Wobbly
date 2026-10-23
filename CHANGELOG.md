@@ -5,6 +5,23 @@ All notable changes to Wobbly are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Close effects.** Closing a window plays one of the 30 window-close effects of
+  [Burn-My-Windows](https://github.com/Schneegans/Burn-My-Windows), ported from GLSL to Metal shaders and drawn on
+  the GPU: Aperture Panels, Apparition, Aura Glow, Broken Glass, Doom, Energize A and B, Fire, Focus, Glide, Glitch,
+  Hexagon, Incinerate, Materialize, Matrix, Morph, Mushroom, Paint Brush, Pixelate, Pixel Wheel, Pixel Wipe, Portal,
+  RGB Warp, Snap of Disintegration, Team Rocket, T-Rex Attack, TV Effect, TV Glitch, Wisps and Wormhole.
+  - New **Close Effect** menu (an effect, Random or Off; Fire by default) and a **Duration** slider.
+  - It plays when closing with the close button or with ⌘W / ⌘Q. The window is captured beforehand, when a click lands
+    near the close button or ⌘ is pressed, and the effect starts as soon as macOS fades the window out or removes it.
+    Minimizing, hiding and switching Spaces are ignored.
+  - Aperture Panels, Morph and Wormhole animate only the window: the real desktop shows through.
+- `wobbly-effects-preview`, a command-line tool that renders the effects headlessly, checks every shader, texture
+  and seed, and writes a contact sheet per effect (`swift run wobbly-effects-preview --check`).
+
 ## [0.1.1]
 
 ### Fixed

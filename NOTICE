@@ -51,3 +51,33 @@ Copyright (C) 2020 Mauro Pepe <https://github.com/hermes83/compiz-windows-effect
 
 Licensed under the GNU General Public License, version 3 or (at your option)
 any later version. See LICENSE for the full text.
+
+--------------------------------------------------------------------------------
+Burn-My-Windows, resources/shaders/*.frag and resources/shaders/common.glsl
+Used in: Sources/WobblyEffects/Resources/Shaders/*.metal (ported from GLSL to Metal)
+         and the effect settings in Sources/WobblyEffects/CloseEffect.swift
+--------------------------------------------------------------------------------
+
+Copyright (C) Simon Schneegans <code@simonschneegans.de>
+https://github.com/Schneegans/Burn-My-Windows
+
+Licensed under the GNU General Public License, version 3 or (at your option)
+any later version. See LICENSE for the full text.
+
+The shaders include the following third-party code, which Burn-My-Windows
+includes under the MIT License:
+
+- Hash functions, Copyright (c) 2014 David Hoskins, https://www.shadertoy.com/view/4djSRW
+- 2D simplex noise, Copyright (c) 2013 Inigo Quilez, https://www.shadertoy.com/view/Msf3WH
+- 3D simplex noise, Copyright (c) 2013 Nikita Miropolskiy, https://www.shadertoy.com/view/XsX3zB
+
+--------------------------------------------------------------------------------
+Burn-My-Windows, resources/img/*.png
+Used in: Sources/WobblyEffects/Resources/Textures/ (brush, claws, dust, matrixFont, shards)
+--------------------------------------------------------------------------------
+
+Copyright (C) Simon Schneegans <code@simonschneegans.de>
+
+Licensed under the Creative Commons Attribution 4.0 International license
+(CC-BY-4.0), https://creativecommons.org/licenses/by/4.0/. The images are used
+unchanged.
